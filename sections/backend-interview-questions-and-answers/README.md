@@ -40,3 +40,67 @@ JWT Stateless Authentication-এর জন্য খুবই জনপ্রি
 
 - **Long Expiry রাখা**: Access Token এর Expiry অনেক বড় রাখলে, চুরি হলে সেটা অনেক লম্বা সময় ধরে ব্যবহারযোগ্য থাকে। তাই ছোট Expiry + Refresh Token pattern ব্যবহার করাই ভালো।
 
+## আপনি একটি banking application-এর backend developer। User login করার পর server একটি HttpOnly session cookie দেয়। এরপর user-এর account থেকে টাকা transfer করার API আছে। একজন security engineer নিজে আপনাকে জানালেন যে, user অন্য একটি malicious website-এ গেলে সেই website থেকে /api/transfer-এ request পাঠানো সম্ভব এবং request-এর সাথে user's session cookie-ও যাচ্ছে। আপনি backend developer হিসেবে কীভাবে explain করবেন—এখানে কী vulnerability হচ্ছে এবং কীভাবে আপনি এটি prevent করবেন?
+
+এখানে সবচেয়ে গুরুত্বপূর্ণ বিষয় হলো, HttpOnly cookie JavaScript দিয়ে read করা বন্ধ করে, কিন্তু browser-কে cookie automatically send করা থেকে বন্ধ করে না।
+
+backend developer হিসেবে কী করব আমি যা করব,
+
+**Cookie-তে SameSite সেট করব**
+
+```
+Set-Cookie: session=abc123;
+HttpOnly;
+Secure;
+SameSite=Strict
+```
+
+তাহলে অন্য malicious website থেকে:
+
+```
+POST https://bank.com/api/transfer
+```
+
+request গেলেও browser সাধারণত bank.com-এর session cookie cross-site context-এ পাঠাবে না।
+
+## এখানে CORS-এর কি কোনো ভূমিকা আছে?
+
+না। CORS আর CSRF দুইটা আলাদা security problem solve করে।
+
+**CORS-এর কাজ মূলত হলো:**
+
+```
+evil.com কি bank.com থেকে response পড়তে পারবে?
+```
+
+আপনি যদি বলেন:
+
+```
+Access-Control-Allow-Origin: https://bank.com
+```
+
+তাহলে evil.com response পড়তে পারবে না।
+
+CSRF attack-এর জন্য attacker-এর সবসময় response পড়া দরকার হয় না।
+
+ধরুন attacker শুধু এই request পাঠাতে পারল:
+
+```
+POST /api/transfer
+Cookie: session=abc123
+
+{
+    "to": "attacker",
+    "amount": 50000
+}
+```
+
+যদি server request process করে ফেলে:
+
+```
+$50,000 transfer
+       ↓
+attacker account
+```
+
+তাহলে attack সফল। Attacker response পেল কি পেল না—এটা এখানে মূল সমস্যা না।
