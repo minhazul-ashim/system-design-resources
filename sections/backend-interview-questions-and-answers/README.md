@@ -40,6 +40,30 @@ JWT Stateless Authentication-এর জন্য খুবই জনপ্রি
 
 - **Long Expiry রাখা**: Access Token এর Expiry অনেক বড় রাখলে, চুরি হলে সেটা অনেক লম্বা সময় ধরে ব্যবহারযোগ্য থাকে। তাই ছোট Expiry + Refresh Token pattern ব্যবহার করাই ভালো।
 
+## আপনার কাছে JWT access token আছে যার মেয়াদ ১৫ মিনিট, এবং refresh token আছে যার মেয়াদ ৩০ দিন। একজন user-এর refresh token চুরি হয়ে যায়। আপনি কীভাবে এটি শনাক্ত করবেন এবং বাতিল করবেন?
+
+আমি Refresh Token Rotation + Server-side Tracking ব্যবহার করব।
+
+Access token-কে আমি stateless JWT রাখব এবং এর expiry 15 মিনিট রাখব। কিন্তু refresh token-এর জন্য database-এ jti বা token-এর hash, সাথে userId, familyId, expiresAt, revokedAt ইত্যাদি রাখব।
+
+প্রতিবার refresh token ব্যবহার হলে পুরোনো refresh token-টি revoke করে নতুন refresh token issue করব।
+
+যেমন:
+
+`RT1 → RT2 → RT3`
+
+ধরুন, attacker RT2 চুরি করেছে। কিন্তু legitimate user ইতিমধ্যে RT2 ব্যবহার করে RT3 পেয়ে গেছে। তাই database-এ RT2 এখন revoked থাকবে।
+
+পরে attacker যদি আবার RT2 দিয়ে refresh করার চেষ্টা করে, আমি বুঝতে পারব যে একটি revoked refresh token আবার ব্যবহার করা হচ্ছে। এটাকে আমি refresh token reuse detection হিসেবে ধরব।
+
+তখন আমি পুরো token family revoke করব:
+
+`RT1 ❌ → RT2 ❌ → RT3 ❌`
+
+এরপর 401 Unauthorized return করব এবং user-কে আবার login করতে বলব।
+
+আর যদি legitimate user এখনো RT2 ব্যবহার না করে থাকে, তাহলে শুধুমাত্র JWT দেখে আমি বুঝতে পারব না যে RT2 চুরি হয়েছে। কারণ attacker-এর কাছে থাকা RT2 এবং legitimate user's RT2 একই valid token।
+
 ## আপনি একটি banking application-এর backend developer। User login করার পর server একটি HttpOnly session cookie দেয়। এরপর user-এর account থেকে টাকা transfer করার API আছে। একজন security engineer নিজে আপনাকে জানালেন যে, user অন্য একটি malicious website-এ গেলে সেই website থেকে /api/transfer-এ request পাঠানো সম্ভব এবং request-এর সাথে user's session cookie-ও যাচ্ছে। আপনি backend developer হিসেবে কীভাবে explain করবেন—এখানে কী vulnerability হচ্ছে এবং কীভাবে আপনি এটি prevent করবেন?
 
 এখানে সবচেয়ে গুরুত্বপূর্ণ বিষয় হলো, HttpOnly cookie JavaScript দিয়ে read করা বন্ধ করে, কিন্তু browser-কে cookie automatically send করা থেকে বন্ধ করে না।
@@ -104,3 +128,27 @@ attacker account
 ```
 
 তাহলে attack সফল। Attacker response পেল কি পেল না—এটা এখানে মূল সমস্যা না।
+
+## PKCE authorization code interception ঠেকায়, আর state parameter CSRF/response injection ঠেকায় — দুটোর attack vector ঠিক কোথায় আলাদা, ব্যাখ্যা করুন। যদি আপনার flow-তে শুধু state verification থাকে কিন্তু PKCE না থাকে, তাহলে কোন attack তখনও সম্ভব থেকে যায়? উল্টোটা হলে (PKCE আছে, state নেই) কী ঝুঁকি থেকে যায়? দুটো mechanism একসাথে থাকলে overall security guarantee-টা কী দাঁড়ায়?
+
+### PKCE (Proof Key for Code Exchange)
+
+PKCE মূলত authorization code interception attack থেকে protection দেয়।
+OAuth flow শুরু করার সময় client একটি random code_verifier তৈরি করে এবং তার থেকে code_challenge তৈরি করে। পরে authorization code দিয়ে token নিতে গেলে original code_verifier দিতে হয়।
+
+তাই কোনো attacker authorization code পেয়ে গেলেও code_verifier ছাড়া সেটি দিয়ে token নিতে পারবে না।
+
+সংক্ষেপে:
+
+**PKCE ব্যবহার করলে authorization code চুরি হলেও attacker সেটি ব্যবহার করে access/refresh token নিতে পারে না।**
+
+### State Verification
+
+state parameter মূলত CSRF এবং OAuth response injection attack প্রতিরোধ করে।
+OAuth শুরু করার সময় application একটি cryptographically random state তৈরি করে এবং সেটি initiating browser/session-এর সাথে bind করে রাখে। OAuth callback আসার পর returned state এবং expected state match করতে হবে।
+
+Match না করলে request reject করতে হবে—এবং ideally authorization code exchange বা কোনো data persist করার আগেই validation করতে হবে।
+
+সংক্ষেপে:
+
+**State verification নিশ্চিত করে যে OAuth callback-টি সত্যিই যে browser/user OAuth flow শুরু করেছিল, সেখান থেকেই এসেছে।**
